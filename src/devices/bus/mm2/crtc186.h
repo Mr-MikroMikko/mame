@@ -64,7 +64,7 @@ private:
 	void cpl_w(int state) { m_cpl = state; }
 	void blc_w(int state) { m_blc = state; }
 	void mode_w(int state) { m_mode = state; set_vidldsh_timer(); }
-	void modeg_w(int state) { m_modeg = state; set_vidldsh_timer(); }
+	void modeg_w(int state);
 	void c70_50_w(int state) { m_c70_50 = state; }
 	void cru_w(int state) { m_cru = state; }
 	void crb_w(int state) { m_crb = state; }
@@ -83,6 +83,7 @@ private:
 	void set_vidldsh_timer();
 	int character_width() const { return m_modeg ? 16 : 10; }
 	void draw_character(int x, int y);
+	void draw_graphics(int x, int y);
 
 	TIMER_DEVICE_CALLBACK_MEMBER( vidldsh_tick );
 
@@ -104,6 +105,8 @@ private:
 	int m_col;
 	int m_row;
 	int m_scanline;
+	int m_last_x;
+	u8 m_vdelay;
 
 	static constexpr rgb_t halflit() { return rgb_t(0x7f, 0x7f, 0x7f); }
 };

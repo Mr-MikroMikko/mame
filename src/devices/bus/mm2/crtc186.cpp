@@ -35,7 +35,7 @@
 
     TODO:
 
-    - graphics mode (no software available to exercise it)
+    - graphics mode: cursor, exact routing of the attribute byte dots
 
 */
 
@@ -47,7 +47,7 @@ DEFINE_DEVICE_TYPE(NOKIA_CRTC186, crtc186_device, "nokia_crtc186", "Nokia MikroM
 crtc186_device::crtc186_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock) :
 	device_t(mconfig, NOKIA_CRTC186, tag, owner, clock),
 	device_mikromikko2_expansion_bus_card_interface(mconfig, *this),
-	m_video_ram(*this, "ram", 0x4000, ENDIANNESS_LITTLE),
+	m_video_ram(*this, "ram", 0x2000, ENDIANNESS_LITTLE),
 	m_char_rom(*this, "chargen"),
 	m_attr_rom(*this, "attr"),
 	m_vpac(*this, "crt9007"),
@@ -151,7 +151,8 @@ void crtc186_device::device_start()
 
 	m_screen->register_screen_bitmap(m_bitmap);
 
-	m_bus->memspace().install_ram(0xd0000, 0xd3fff, m_video_ram);
+	// 8 KB of video memory, which is mirrored over the 32 KB window of the card (verified on real hardware)
+	m_bus->memspace().install_ram(0xd0000, 0xd1fff, 0x6000, m_video_ram);
 	m_bus->memspace().install_read_tap(0xd8000, 0xdbfff, "charrom", [this](offs_t offset, uint16_t &data, uint16_t mem_mask) {
 		if (ACCESSING_BITS_0_7) {
 			data |= m_char_rom->base()[(offset >> 1) & 0x1fff];
@@ -177,6 +178,8 @@ void crtc186_device::device_start()
 	save_item(NAME(m_col));
 	save_item(NAME(m_row));
 	save_item(NAME(m_scanline));
+	save_item(NAME(m_last_x));
+	save_item(NAME(m_vdelay));
 }
 
 void crtc186_device::device_reset()
@@ -192,6 +195,8 @@ void crtc186_device::device_reset()
 	m_col = 0;
 	m_row = 0;
 	m_scanline = 0;
+	m_last_x = 0x7fffffff;
+	m_vdelay = 0x1e;
 
 	// the control latch outputs are cleared on reset, which does not invoke the callbacks
 	m_cpl = m_blc = m_mode = m_modeg = m_c70_50 = m_cru = m_crb = false;
@@ -228,6 +233,17 @@ void crtc186_device::vpac_w(offs_t offset, uint16_t data, uint16_t mem_mask)
 {
 	if (ACCESSING_BITS_0_7) {
 		m_vpac->write(offset, data & 0xff);
+
+		// the vertical delay positions the picture vertically
+		if (offset == 5)
+		{
+			// the rows above the picture are not drawn, so the picture drawn at the previous
+			// position is cleared to the background level
+			if (m_modeg && (m_vdelay != (data & 0xff)))
+				m_bitmap.fill(m_cpl ? rgb_t::black() : rgb_t::white());
+
+			m_vdelay = data & 0xff;
+		}
 	}
 
 	if (ACCESSING_BITS_8_15) {
@@ -240,7 +256,12 @@ void crtc186_device::vpac_w(offs_t offset, uint16_t data, uint16_t mem_mask)
 
 uint8_t crtc186_device::videoram_r(offs_t offset)
 {
-	u16 data = m_video_ram[offset & 0x1fff];
+	// In the graphic mode the data rows are displayed with doubled dot width (the ZOOM
+	// row attribute selected by the row attribute bits of the auxiliary address register
+	// 2), so the video memory holds only one word for each two character times of the
+	// data row. The CRT9007 model fetches a word for every character time, so the
+	// address is halved here and the row buffer receives each word twice.
+	u16 data = m_video_ram[(m_modeg ? (offset >> 1) : offset) & 0x0fff];
 
 	// character
 	m_drb0->write(data & 0xff);
@@ -330,20 +351,75 @@ void crtc186_device::drb_attr_w(uint8_t data)
 	m_vidat = data;
 }
 
+void crtc186_device::modeg_w(int state)
+{
+	m_modeg = state;
+
+	// the picture does not cover the whole screen in the graphic mode, the rest of it
+	// is blanked to the background level
+	if (m_modeg)
+		m_bitmap.fill(m_cpl ? rgb_t::black() : rgb_t::white());
+
+	set_vidldsh_timer();
+}
+
 void crtc186_device::set_vidldsh_timer()
 {
 	const XTAL busdotclk = XTAL(35'452'500) / (m_mode ? 2 : 1);
-	const XTAL vidcclk = busdotclk / character_width();
+
+	// the character times of the 106 character times of the scan line of the alphanumeric
+	// mode are 10 dots, and the 66 character times of the graphic mode 16 dots, which
+	// makes the scan line about the same length. The raster is fixed to the former, so the
+	// character clock of the graphic mode is scaled to get a whole number of character
+	// times in the raster scan line.
+	const uint32_t vidcclk = uint32_t(busdotclk.value() * (m_modeg ? 66 : 106) / (106 * 10) + 0.5);
 
 	m_vpac->set_character_width(character_width());
 	m_vpac->set_unscaled_clock(vidcclk);
 
 	// the character time is locked to the start of the scan line
+	m_last_x = 0x7fffffff;
 	m_timer_vidldsh->adjust(m_screen->time_until_pos(0, 0), 0, attotime::from_hz(vidcclk));
+}
+
+void crtc186_device::draw_graphics(int x, int y)
+{
+	// the data row is displayed zoomed, so only every second character time of the
+	// row buffer starts a new word, which is displayed for two character times
+	if (m_col & 1)
+		return;
+
+	// the picture is centered by the vertical delay (alphanumeric mode is the reference)
+	y += m_vdelay - 0x1e;
+
+	rectangle const &visarea = m_screen->visible_area();
+
+	if ((y < visarea.top()) || (y > visarea.bottom()) || (x < visarea.left()) || ((x + 2 * character_width() - 1) > visarea.right()))
+		return;
+
+	// the character generator is bypassed: the character generator EPROM holds the character
+	// code on the 16th scan line of each character, which the graphic mode addresses, and the
+	// attribute EPROM only reorders the dots. The dots are shifted out starting from the LSB
+	// of the character byte, followed by the attribute byte.
+	u16 const dots = m_vidla | (m_vidat << 8);
+
+	for (int dot = 0; dot < character_width(); dot++)
+	{
+		rgb_t const color = m_blc ? ((BIT(dots, dot) ^ m_cpl) ? rgb_t::black() : rgb_t::white()) : rgb_t::black();
+
+		m_bitmap.pix(y, x + 2 * dot) = color;
+		m_bitmap.pix(y, x + 2 * dot + 1) = color;
+	}
 }
 
 void crtc186_device::draw_character(int x, int y)
 {
+	if (m_modeg)
+	{
+		draw_graphics(x, y);
+		return;
+	}
+
 	rectangle const &visarea = m_screen->visible_area();
 
 	if ((y < visarea.top()) || (y > visarea.bottom()) || (x < visarea.left()) || ((x + character_width() - 1) > visarea.right()))
@@ -424,7 +500,12 @@ TIMER_DEVICE_CALLBACK_MEMBER( crtc186_device::vidldsh_tick )
 	// the scan line is the one at the start of the line
 	int const x = m_screen->hpos();
 
-	if (!x)
+	// the character clock of the graphic mode is not a whole fraction of the raster
+	// scan line, so the start of the line is detected by the position wrapping around
+	bool const line_start = m_modeg ? (x < m_last_x) : !x;
+	m_last_x = x;
+
+	if (line_start)
 	{
 		if (!m_drb)
 		{
