@@ -24,6 +24,7 @@ mm2_netnet_device::mm2_netnet_device(const machine_config &mconfig, const char *
 	m_rxc_cb(*this),
 	m_rxd_cb(*this),
 	m_timer(nullptr),
+		m_poll_timer(nullptr),
 	m_enabled(false),
 	m_clk(0),
 	m_txd(1),
@@ -42,6 +43,9 @@ void mm2_netnet_device::device_add_mconfig(machine_config &config)
 void mm2_netnet_device::device_start()
 {
 	m_timer = timer_alloc(FUNC(mm2_netnet_device::clock_tick), this);
+	m_poll_timer = timer_alloc(FUNC(mm2_netnet_device::poll_tick), this);
+	// the adapter listens to the line whether or not the station has selected the external clock
+	m_poll_timer->adjust(attotime::from_msec(2), 0, attotime::from_msec(2));
 
 	save_item(NAME(m_enabled));
 	save_item(NAME(m_clk));
@@ -89,6 +93,11 @@ void mm2_netnet_device::enable(bool state)
 	}
 }
 
+TIMER_CALLBACK_MEMBER(mm2_netnet_device::poll_tick)
+{
+	rx_poll_socket();
+}
+
 TIMER_CALLBACK_MEMBER(mm2_netnet_device::clock_tick)
 {
 	m_clk ^= 1;
@@ -99,13 +108,8 @@ TIMER_CALLBACK_MEMBER(mm2_netnet_device::clock_tick)
 	{
 		// the MPSC changes TxD on the falling edge, sample it on the rising edge
 		tx_bit(m_txd);
-
-		if (++m_poll_count >= POLL_TICKS)
-		{
-			m_poll_count = 0;
-			rx_poll_socket();
-		}
 	}
+
 	else
 	{
 		// the MPSC samples RxD on the rising edge, change it on the falling edge
@@ -197,10 +201,14 @@ void mm2_netnet_device::send_frame(const std::vector<uint8_t> &frame)
 	if (!m_bitb->exists())
 		return;
 
-	m_bitb->output(frame.size() & 0xff);
-	m_bitb->output((frame.size() >> 8) & 0xff);
-	for (uint8_t b : frame)
-		m_bitb->output(b);
+	std::vector<uint8_t> buf;
+	buf.reserve(frame.size() + 2);
+	buf.push_back(frame.size() & 0xff);
+	buf.push_back((frame.size() >> 8) & 0xff);
+	buf.insert(buf.end(), frame.begin(), frame.end());
+	uint32_t const written = m_bitb->fwrite(buf.data(), buf.size());
+	if (written != buf.size())
+		logerror("NETNET socket write failed (%u of %u)\n", written, unsigned(buf.size()));
 }
 
 //-------------------------------------------------

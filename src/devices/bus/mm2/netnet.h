@@ -49,6 +49,7 @@ protected:
 
 private:
 	TIMER_CALLBACK_MEMBER(clock_tick);
+	TIMER_CALLBACK_MEMBER(poll_tick);
 	void tx_bit(int bit);
 	void tx_frame_done();
 	void rx_poll_socket();
@@ -61,6 +62,7 @@ private:
 	devcb_write_line m_rxc_cb;
 	devcb_write_line m_rxd_cb;
 	emu_timer *m_timer;
+	emu_timer *m_poll_timer;
 
 	bool m_enabled;
 	int m_clk;
