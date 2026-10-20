@@ -1666,7 +1666,13 @@ uint16_t i80186_cpu_device::internal_port_r(offs_t offset, uint16_t mem_mask)
 		case 0x12:
 			LOGMASKED(LOG_PORTS, "%05X:read 80186 interrupt poll\n", m_pc);
 			if (m_intr.poll_status & 0x8000)
-				inta_callback(*this, 0);
+			{
+				// in iRMX mode the poll read only acknowledges the internal controller, not the external master 8259A
+				if (BIT(m_reloc, 14))
+					int_callback(*this, 0);
+				else
+					inta_callback(*this, 0);
+			}
 			return m_intr.poll_status;
 
 		case 0x13:

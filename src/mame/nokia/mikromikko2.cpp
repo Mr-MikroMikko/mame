@@ -79,6 +79,7 @@
 
 #include "emu.h"
 #include "bus/mm2/exp.h"
+#include "bus/mm2/netnet.h"
 #include "bus/rs232/rs232.h"
 #include "cpu/i86/i186.h"
 #include "machine/74259.h"
@@ -111,6 +112,7 @@ public:
 		m_speaker(*this, "speaker"),
 		m_rs232a(*this, "rs232a"),
 		m_rs232b(*this, "rs232b"),
+			m_netnet(*this, "netnet"),
 		m_exp(*this, "exp"),
 		m_ctrl1(*this, "control1"),
 		m_ctrl2(*this, "control2"),
@@ -131,6 +133,7 @@ private:
 	required_device<speaker_sound_device> m_speaker;
 	required_device<rs232_port_device> m_rs232a;
 	required_device<rs232_port_device> m_rs232b;
+	required_device<mm2_netnet_device> m_netnet;
 	required_device<mikromikko2_expansion_bus_device> m_exp;
 	required_device<ls259_device> m_ctrl1;
 	required_device<ls259_device> m_ctrl2;
@@ -146,11 +149,13 @@ private:
 	void novram_store(offs_t offset, uint8_t data) { m_novram->store(1); m_novram->store(0); }
 	void tcl_w(offs_t offset, uint8_t data) { m_pic->ir0_w(CLEAR_LINE); }
 	void diag_w(offs_t offset, uint8_t data) { logerror("DIAG %02x\n", data); }
-	void cls0_w(int state) { m_cls0 = state; }
-	void cls1_w(int state) { m_cls1 = state; }
+	void netnet_select() { bool const sel = m_cls1 && !m_cls0; m_netnet->enable(sel); if (sel) m_mpsc->ctsa_w(1); }
+	void rs232a_cts_w(int state) { if (!(m_cls1 && !m_cls0)) m_mpsc->ctsa_w(state); }
+	void cls0_w(int state) { m_cls0 = state; netnet_select(); }
+	void cls1_w(int state) { m_cls1 = state; netnet_select(); }
 	void llba_w(int state) { m_llba = state; }
 	void llbb_w(int state) { m_llbb = state; }
-	void mpsc_txda_w(int state) { if (m_llba) m_mpsc->rxa_w(state); else m_rs232a->write_txd(state); }
+	void mpsc_txda_w(int state) { if (m_llba) m_mpsc->rxa_w(state); else if (m_cls1 && !m_cls0) m_netnet->txd_w(state); else m_rs232a->write_txd(state); }
 	void mpsc_txdb_w(int state) { if (m_llbb) m_mpsc->rxb_w(state); else m_rs232b->write_txd(state); }
 	void mpsc_rtsa_w(int state) { if (m_llba) m_mpsc->ctsa_w(state); else m_rs232a->write_rts(state); }
 	void mpsc_rtsb_w(int state) { if (m_llbb) m_mpsc->ctsb_w(state); else m_rs232b->write_rts(state); }
@@ -189,7 +194,9 @@ uint16_t mm2_state::mpsc_r(offs_t offset, uint16_t mem_mask)
 		return status_r(0) << 8;
 
 	if (ACCESSING_BITS_0_7)
+	{
 		return m_mpsc->cd_ba_r(offset);
+	}
 
 	return 0;
 }
@@ -305,7 +312,13 @@ void mm2_state::mm2(machine_config &config)
 	RS232_PORT(config, m_rs232a, default_rs232_devices, nullptr);
 	m_rs232a->rxd_handler().set(m_mpsc, FUNC(i8274_device::rxa_w));
 	m_rs232a->dcd_handler().set(m_mpsc, FUNC(i8274_device::dcda_w));
-	m_rs232a->cts_handler().set(m_mpsc, FUNC(i8274_device::ctsa_w));
+	m_rs232a->cts_handler().set(FUNC(mm2_state::rs232a_cts_w));
+
+	// NETNET LAN adapter (MPSC channel A with external clock, CLS1=1 CLS0=0)
+	MM2_NETNET(config, m_netnet);
+	m_netnet->txc_handler().set(m_mpsc, FUNC(i8274_device::txca_w));
+	m_netnet->rxc_handler().set(m_mpsc, FUNC(i8274_device::rxca_w));
+	m_netnet->rxd_handler().set(m_mpsc, FUNC(i8274_device::rxa_w));
 
 	RS232_PORT(config, m_rs232b, default_rs232_devices, nullptr);
 	m_rs232b->rxd_handler().set(m_mpsc, FUNC(i8274_device::rxb_w));
