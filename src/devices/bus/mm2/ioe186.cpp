@@ -52,6 +52,7 @@ ioe186_device::ioe186_device(const machine_config &mconfig, const char *tag, dev
 	m_out(*this, "output"),
 	m_rs232a(*this, "rs232a"),
 	m_rs232b(*this, "rs232b"),
+	m_netnet(*this, "netnet"),
 	m_sid(*this, "SID"),
 	m_sic(*this, "SIC"),
 	m_s1(*this, "S1"),
@@ -84,7 +85,7 @@ void ioe186_device::device_add_mconfig(machine_config &config)
 
 	AM9517A(config, m_dmac, XTAL(16'000'000)/4);
 	m_dmac->out_hreq_callback().set(FUNC(ioe186_device::hold_w));
-	m_dmac->out_eop_callback().set(m_irqs, FUNC(input_merger_device::in_w<1>));
+	m_dmac->out_eop_callback().set(FUNC(ioe186_device::eop_w));
 	m_dmac->in_memr_callback().set(FUNC(ioe186_device::dmac_mem_r));
 	m_dmac->out_memw_callback().set(FUNC(ioe186_device::dmac_mem_w));
 	m_dmac->out_iow_callback<0>().set(FUNC(ioe186_device::mpsc_txa_w));
@@ -117,8 +118,14 @@ void ioe186_device::device_add_mconfig(machine_config &config)
 
 	RS232_PORT(config, m_rs232a, default_rs232_devices, nullptr);
 	m_rs232a->rxd_handler().set(m_mpsc, FUNC(i8274_device::rxa_w));
-	m_rs232a->dcd_handler().set(m_mpsc, FUNC(i8274_device::dcda_w));
-	m_rs232a->cts_handler().set(m_mpsc, FUNC(i8274_device::ctsa_w));
+	m_rs232a->dcd_handler().set(FUNC(ioe186_device::rs232a_dcd_w));
+	m_rs232a->cts_handler().set(FUNC(ioe186_device::rs232a_cts_w));
+
+	// NETNET LAN adapter on channel A (external clock, CLA1=1 CLA0=0)
+	MM2_NETNET(config, m_netnet);
+	m_netnet->txc_handler().set(m_mpsc, FUNC(i8274_device::txca_w));
+	m_netnet->rxc_handler().set(m_mpsc, FUNC(i8274_device::rxca_w));
+	m_netnet->rxd_handler().set(m_mpsc, FUNC(i8274_device::rxa_w));
 
 	RS232_PORT(config, m_rs232b, default_rs232_devices, nullptr);
 	m_rs232b->rxd_handler().set(m_mpsc, FUNC(i8274_device::rxb_w));
@@ -148,6 +155,8 @@ void ioe186_device::device_add_mconfig(machine_config &config)
 void ioe186_device::device_start()
 {
 	m_mpsc->synca_w(1);
+
+	m_eop_timer = timer_alloc(FUNC(ioe186_device::eop_timeout), this);
 
 	save_item(NAME(m_page));
 	save_item(NAME(m_hold_level));
@@ -234,4 +243,21 @@ void ioe186_device::tmr2_w(int state)
 	{
 		m_mpsc->txcb_w(state);
 	}
+}
+
+// The DMA controller EOP output is only a pulse, but the interrupt request must stay
+// active long enough for the processor to see it (the level triggered 8259A would lose
+// a zero-width pulse).
+void ioe186_device::eop_w(int state)
+{
+	if (state)
+	{
+		m_irqs->in_w<1>(1);
+		m_eop_timer->adjust(attotime::from_usec(500));
+	}
+}
+
+TIMER_CALLBACK_MEMBER(ioe186_device::eop_timeout)
+{
+	m_irqs->in_w<1>(0);
 }
