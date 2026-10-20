@@ -149,8 +149,9 @@ private:
 	void novram_store(offs_t offset, uint8_t data) { m_novram->store(1); m_novram->store(0); }
 	void tcl_w(offs_t offset, uint8_t data) { m_pic->ir0_w(CLEAR_LINE); }
 	void diag_w(offs_t offset, uint8_t data) { logerror("DIAG %02x\n", data); }
-	void netnet_select() { bool const sel = m_cls1 && !m_cls0; m_netnet->enable(sel); if (sel) m_mpsc->ctsa_w(1); }
+	void netnet_select() { bool const sel = m_cls1 && !m_cls0; m_netnet->enable(sel); if (sel) { m_mpsc->ctsa_w(1); m_mpsc->dcda_w(0); } else { m_mpsc->ctsa_w(m_rs232a->cts_r()); m_mpsc->dcda_w(m_rs232a->dcd_r()); } }
 	void rs232a_cts_w(int state) { if (!(m_cls1 && !m_cls0)) m_mpsc->ctsa_w(state); }
+	void rs232a_dcd_w(int state) { if (!(m_cls1 && !m_cls0)) m_mpsc->dcda_w(state); }
 	void cls0_w(int state) { m_cls0 = state; netnet_select(); }
 	void cls1_w(int state) { m_cls1 = state; netnet_select(); }
 	void llba_w(int state) { m_llba = state; }
@@ -311,7 +312,7 @@ void mm2_state::mm2(machine_config &config)
 
 	RS232_PORT(config, m_rs232a, default_rs232_devices, nullptr);
 	m_rs232a->rxd_handler().set(m_mpsc, FUNC(i8274_device::rxa_w));
-	m_rs232a->dcd_handler().set(m_mpsc, FUNC(i8274_device::dcda_w));
+	m_rs232a->dcd_handler().set(FUNC(mm2_state::rs232a_dcd_w));
 	m_rs232a->cts_handler().set(FUNC(mm2_state::rs232a_cts_w));
 
 	// NETNET LAN adapter (MPSC channel A with external clock, CLS1=1 CLS0=0)
