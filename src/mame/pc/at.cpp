@@ -104,10 +104,14 @@ Variants: T denotes an active 8.4" display, C a passive 9.5" color display. 3560
 
 #include "emu.h"
 
+#include "bus/isa/cga.h"
 #include "bus/isa/isa_cards.h"
+#include "bus/isa/mda.h"
+#include "bus/isa/ndc286.h"
 #include "bus/lpci/pci.h"
 #include "bus/lpci/vt82c505.h"
 #include "bus/pc_kbd/keyboards.h"
+#include "bus/pc_kbd/mm3_hle_kbd.h"
 #include "bus/pc_kbd/pc_kbdc.h"
 #include "cpu/i386/i386.h"
 #include "cpu/i86/i286.h"
@@ -122,7 +126,6 @@ Variants: T denotes an active 8.4" display, C a passive 9.5" color display. 3560
 #include "emupal.h"
 #include "softlist_dev.h"
 #include "speaker.h"
-
 
 namespace {
 
@@ -165,6 +168,7 @@ public:
 	void n8810m15(machine_config &config) ATTR_COLD;
 	void n8810m55(machine_config &config) ATTR_COLD;
 	void ews286(machine_config &config) ATTR_COLD;
+	void mm3ttm215(machine_config &config) ATTR_COLD;
 	void olyport40(machine_config &config) ATTR_COLD;
 	void micral45(machine_config &config) ATTR_COLD;
 	void euroat(machine_config &config) ATTR_COLD;
@@ -445,6 +449,27 @@ void at_state::ews286(machine_config &config)
 	SOFTWARE_LIST(config, "ews286_disk_list").set_original("ews286_flop");
 
 	m_ram->set_default_size("640K");
+}
+
+void at_state::mm3ttm215(machine_config &config)
+{
+	neat(config);
+	m_maincpu->set_clock(12'500'000); // 12.5 MHz (crystals 25/30/16 MHz on the board)
+
+	// same stand-ins as the ASC: NDC-style display, HLE keyboard, Nokia 8742 firmware (the real P8742AH contents are not dumped)
+	subdevice<isa16_slot_device>("isa1")->option_add("ndccga", ISA8_NDC_CGA);
+	subdevice<isa16_slot_device>("isa1")->option_add("ndcmda", ISA8_NDC_STUB);
+	subdevice<isa16_slot_device>("isa1")->set_default_option("ndccga");
+	subdevice<isa16_slot_device>("isa1")->set_fixed(false);
+	subdevice<isa16_slot_device>("isa2")->set_option_machine_config("fdc", cfg_single_1200K);
+	subdevice<pc_kbdc_device>("kbd")->option_reset();
+	subdevice<pc_kbdc_device>("kbd")->option_add("hle", MM3_HLE_KBD);
+	subdevice<pc_kbdc_device>("kbd")->set_default_option("hle");
+
+	m_ram->set_default_size("2M");
+
+	subdevice<at_keyboard_controller_device>("mb:keybc")->set_default_bios_tag("nokia");
+	subdevice<mcs48_cpu_device>("mb:keybc:mcu")->p1_in_cb().set_constant(0xbe);
 }
 
 void at_state::ec1842(machine_config &config)
@@ -2577,6 +2602,13 @@ ROM_START( ews286 ) // Computer is brown/yellow-ish with Ericsson logo
 	ROM_REGION16_LE(0x20000, "bios", 0)
 	ROM_LOAD16_BYTE( "rys_103_1002_r8a_3c00_ic-pos_71.bin", 0x18000, 0x4000, CRC(af179e56) SHA1(58b1df46d6e68eef472a0529cb9317abaf17880f)) // Last ROM set and has Nokia
 	ROM_LOAD16_BYTE( "rys_103_1003_r8a_8600_ic-pos_69.bin", 0x18001, 0x4000, CRC(555502cb) SHA1(1977fe54b69c5e52731bf3eb8bdabe777aac014b)) // copyright patched in both roms
+ROM_END
+
+// Nokia MikroMikko 3TT m215 - board TVA 1195511 R2 (Chips NEAT chipset), Nokia ROM BIOS #7 version 7.02 (c) 1988, 1989, 2 x 27C256
+// BIOS dump from archive.org (mikromikko-3tt-m215-bios, uploader Saikka), merged 64 kB image (odd file first)
+ROM_START( mm3ttm215 )
+	ROM_REGION16_LE(0x20000, "bios", 0)
+	ROM_LOAD( "tva1195511r2_full64.bin", 0x10000, 0x10000, CRC(b0c3b47b) SHA1(21a6d165e820cba7ee9b5b041490a5db29f97e20) )
 ROM_END
 
 // Nokia Data WS286
@@ -5607,6 +5639,7 @@ COMP( 199?, minisys2k, ibm5170, 0,       atturbo,   0,     at_state,     init_at
 COMP( 198?, mkp286,    ibm5170, 0,       atturbo,   0,     at_state,     init_at,        "Morse", "KP-286", MACHINE_NOT_WORKING )
 COMP( 1987, n8810m15,  ibm5170, 0,       n8810m15,  0,     at_state,     init_at,        "Nixdorf Computer AG", "8810 M15", MACHINE_NOT_WORKING )
 COMP( 1990, n8810m16c, ibm5170, 0,       n8810m15,  0,     at_state,     init_at,        "Nixdorf Computer AG", "8810 M16 CGA version", MACHINE_NOT_WORKING )
+COMP( 1989, mm3ttm215, ibm5170, 0,      mm3ttm215, 0,     at_state,     init_at,        "Nokia Data",  "MikroMikko 3TT m215 (BIOS 7.02)", MACHINE_NOT_WORKING )
 COMP( 1990, n8810m30,  ibm5170, 0,       neat,      0,     at_state,     init_at,        "Nixdorf Computer AG", "8810 M30", MACHINE_NOT_WORKING )
 COMP( 1986, n8810m55,  ibm5170, 0,       n8810m55,  0,     at_state,     init_at,        "Nixdorf Computer AG", "8810 M55", MACHINE_NOT_WORKING )
 COMP( 1990, n8810m16v, ibm5170, 0,       atturbo,   0,     at_state,     init_at,        "Nixdorf Computer AG", "8810 M16 VGA version", MACHINE_NOT_WORKING )
