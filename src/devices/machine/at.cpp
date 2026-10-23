@@ -367,7 +367,7 @@ void at_mb_device::set_dma_channel(int channel, int state)
 
 void at_mb_device::rtcas_nmi_w(uint8_t data)
 {
-	m_nmi_enabled = BIT(data,7);
+	m_nmi_enabled = !BIT(data, 7); // bit 7 of port 70h masks the NMI (1 = disabled), unlike the XT where port A0h bit 7 enables it
 	if (!m_nmi_enabled)
 		m_maincpu->set_input_line(INPUT_LINE_NMI, CLEAR_LINE);
 	m_mc146818->address_w(data);
