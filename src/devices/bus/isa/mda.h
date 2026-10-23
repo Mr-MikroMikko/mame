@@ -8,6 +8,7 @@
 #include "isa.h"
 
 DECLARE_DEVICE_TYPE(ISA8_MDA, device_isa8_card_interface)
+DECLARE_DEVICE_TYPE(ISA8_NDC_STUB, device_isa8_card_interface)
 DECLARE_DEVICE_TYPE(ISA8_HERCULES, device_isa8_card_interface)
 DECLARE_DEVICE_TYPE(ISA8_EC1840_0002, device_isa8_card_interface)
 

@@ -9,6 +9,7 @@
 
 #include "emu.h"
 #include "mda.h"
+#include "ndc286.h"
 
 #include "machine/pc_lpt.h"
 #include "video/mc6845.h"
@@ -654,4 +655,191 @@ MC6845_UPDATE_ROW(isa8_ec1840_0002_device::update_row)
 		*pixel++ = pen_color(BIT(data, 1) ? fg : bg);
 		*pixel++ = pen_color(BIT(data, 0) ? fg : bg);
 	}
+}
+
+
+/***************************************************************************
+    Nokia NDC 286 in IBM monochrome (MDA) mode (MikroMikko 3 / ASC)
+
+    MDA-compatible adapter with the 9x14 character sets of the real IC38
+    firmware ROM (IBM set at 0x2000, Nokia set at 0x3000, 16 bytes per
+    character). The 8031 control processor runs the real firmware and
+    provides the host registers 3B3/3B6/3B7; its character generator bank
+    bit selects the IBM or the Nokia set. Display memory, PALs and gate
+    arrays are not emulated.
+***************************************************************************/
+
+class isa8_ndc_stub_device : public isa8_mda_device
+{
+public:
+	isa8_ndc_stub_device(machine_config const &mconfig, char const *const tag, device_t *owner, u32 clock)
+		: isa8_mda_device(mconfig, ISA8_NDC_STUB, tag, owner, clock)
+		, m_ndc(*this, "ndc")
+		, m_font_bank(-1)
+	{
+	}
+
+protected:
+	virtual tiny_rom_entry const *device_rom_region() const override ATTR_COLD;
+	virtual void device_add_mconfig(machine_config &config) override ATTR_COLD;
+	virtual void device_start() override ATTR_COLD;
+	virtual void device_reset() override ATTR_COLD;
+	virtual void isa_pio_map(address_map &map) override;
+	virtual void mode_w(u8 data) override;
+	virtual MC6845_UPDATE_ROW(update_row) override;
+
+private:
+	void load_font(int bank);
+	u32 screen_update_ndc(screen_device &screen, bitmap_rgb32 &bitmap, rectangle const &cliprect);
+	MC6845_RECONFIGURE(crtc_reconfigure);
+
+	required_device<ndc286_device> m_ndc;
+	std::unique_ptr<u8[]> m_labelram; // A0000-AFFFF: the softkey label rows live at A83A0 (3 rows x 80 columns x 2 bytes)
+	int m_font_bank;
+};
+
+DEFINE_DEVICE_TYPE_PRIVATE(ISA8_NDC_STUB, device_isa8_card_interface, isa8_ndc_stub_device, "isa_mm3_ndc_stub", "Nokia NDC 286 (MDA mode, 8031 firmware)")
+
+ROM_START( ndc_stub )
+	ROM_REGION(0x08100, "font", ROMREGION_ERASE00)
+ROM_END
+
+tiny_rom_entry const *isa8_ndc_stub_device::device_rom_region() const
+{
+	return ROM_NAME( ndc_stub );
+}
+
+void isa8_ndc_stub_device::device_add_mconfig(machine_config &config)
+{
+	isa8_mda_device::device_add_mconfig(config);
+
+	// 25 text rows from the CRTC plus three softkey label rows below them (Nokia monitor, 9x14 cells)
+	m_screen->set_raw(MDA_CLOCK, 882, 0, 720, 418, 0, 392);
+	m_screen->set_screen_update(FUNC(isa8_ndc_stub_device::screen_update_ndc));
+	m_crtc->set_reconfigure_callback(FUNC(isa8_ndc_stub_device::crtc_reconfigure));
+
+	NDC286(config, m_ndc);
+}
+
+void isa8_ndc_stub_device::device_start()
+{
+	// the real card has 128 KB of display memory (A0000-BFFFF) that the BIOS tests completely: B0000-BFFFF as flat RAM
+	m_vram = std::make_unique<u8[]>(0x10000);
+	save_pointer(NAME(m_vram), 0x10000);
+
+	isa8_mda_device::device_start();
+
+	m_labelram = std::make_unique<u8[]>(0x10000);
+	save_pointer(NAME(m_labelram), 0x10000);
+	m_isa->install_bank(0xa0000, 0xaffff, m_labelram.get());
+	m_isa->install_bank(0xb0000, 0xbffff, m_vram.get());
+
+	// positive display: intensity is inverted (dark characters on paper white)
+	set_pen_color(0, NDC_PAPER_WHITE);   // background
+	set_pen_color(1, ndc_shade(0.60));   // dim
+	set_pen_color(2, ndc_shade(0.12));   // normal characters
+	set_pen_color(3, NDC_INK);           // high intensity characters
+}
+
+MC6845_RECONFIGURE( isa8_ndc_stub_device::crtc_reconfigure )
+{
+	// keep the three softkey label rows (42 lines) below the area the CRTC displays
+	m_screen->configure(width, height + 42, rectangle(visarea.left(), visarea.right(), visarea.top(), visarea.bottom() + 42), frame_period);
+}
+
+u32 isa8_ndc_stub_device::screen_update_ndc(screen_device &screen, bitmap_rgb32 &bitmap, rectangle const &cliprect)
+{
+	m_crtc->screen_update(screen, bitmap, cliprect);
+
+	if (!(m_mode & MODE_VIDEO))
+		return 0;
+
+	// label rows 25-27: standard MDA text (attribute rules as in update_row), no cursor
+	bool const blink = m_mode & MODE_BLINK;
+	for (unsigned row = 0; row < 3; row++)
+	{
+		for (unsigned ra = 0; ra < 14; ra++)
+		{
+			unsigned const y = 350 + row * 14 + ra;
+			if (y < unsigned(cliprect.top()) || y > unsigned(cliprect.bottom()))
+				continue;
+
+			offs_t const font_row = (ra & 0x08) ? 0x800 | (ra & 0x07) : ra;
+			u32 *pixel = &bitmap.pix(y);
+			for (unsigned col = 0; col < 80; col++)
+			{
+				offs_t const offset = 0x83a0 + (row * 80 + col) * 2;
+				u8 const chr = m_labelram[offset + 0];
+				u8 const att = m_labelram[offset + 1];
+
+				bool duplicate = ((chr & 0xe0) == 0xc0);
+				u8 data = m_font[chr * 8 + font_row];
+
+				auto const [fg, bg] = decode_colors(att, blink);
+				if ((ra == 12) && (BIT(att, 0, 3) == 1))
+				{
+					duplicate = true;
+					data = 0xff;
+				}
+				if ((screen.frame_number() & 0x10) && blink && BIT(att, 7))
+					data = 0;
+
+				for (int bit = 7; bit >= 0; bit--)
+					*pixel++ = pen_color(BIT(data, bit) ? fg : bg);
+				*pixel++ = pen_color((duplicate && BIT(data, 0)) ? fg : bg);
+			}
+		}
+	}
+
+	return 0;
+}
+
+void isa8_ndc_stub_device::isa_pio_map(address_map &map)
+{
+	isa8_mda_device::isa_pio_map(map);
+
+	// NDC 286 host interface (the real MDA CRTC mirrors on 3B3/3B6/3B7 do not exist on this card)
+	map(0x3, 0x3).rw(m_ndc, FUNC(ndc286_device::host_status_r), FUNC(ndc286_device::host_control_w));
+	map(0x6, 0x6).rw(m_ndc, FUNC(ndc286_device::host_data_r), FUNC(ndc286_device::host_data_w));
+	map(0x7, 0x7).rw(m_ndc, FUNC(ndc286_device::host_result_r), FUNC(ndc286_device::host_test_w));
+}
+
+void isa8_ndc_stub_device::mode_w(u8 data)
+{
+	isa8_mda_device::mode_w(data);
+	m_ndc->set_host_mode(data);
+}
+
+void isa8_ndc_stub_device::load_font(int bank)
+{
+	// MDA layout: rows 0-7 at chr*8, rows 8-13 at 0x800 + chr*8 + (row - 8); source is 16 bytes per character
+	u8 const *const fw = m_ndc->firmware() + (bank ? 0x3000 : 0x2000);
+	for (u32 c = 0; c < 256; c++)
+	{
+		for (u32 ra = 0; ra < 14; ra++)
+		{
+			u8 const data = fw[c * 16 + ra];
+			if (ra < 8)
+				m_font[c * 8 + ra] = data;
+			else
+				m_font[0x800 + c * 8 + (ra - 8)] = data;
+		}
+	}
+	m_font_bank = bank;
+}
+
+MC6845_UPDATE_ROW( isa8_ndc_stub_device::update_row )
+{
+	int const bank = m_ndc->charset_bank();
+	if (bank != m_font_bank)
+		load_font(bank);
+
+	isa8_mda_device::update_row(bitmap, cliprect, ma, ra, y, x_count, cursor_x, de, hbp, vbp);
+}
+
+void isa8_ndc_stub_device::device_reset()
+{
+	isa8_mda_device::device_reset();
+	m_font_bank = -1;
+	load_font(0);
 }

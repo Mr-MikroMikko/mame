@@ -85,6 +85,7 @@ TODO:
 #include "emu.h"
 #include "video/mc6845.h"
 #include "cga.h"
+#include "ndc286.h"
 #include "video/cgapal.h"
 
 #define VERBOSE_CGA 0       /* CGA (Color Graphics Adapter) */
@@ -2188,4 +2189,109 @@ MC6845_UPDATE_ROW( isa8_cga_pcxport_device::crtc_update_row )
 	m_y = y;
 
 	isa8_cga_device::crtc_update_row(bitmap, cliprect, ma, ra, y, x_count, cursor_x, de, hbp, vbp);
+}
+
+
+/***************************************************************************
+    Nokia NDC 286 in IBM CGA mode (MikroMikko 3 / ASC)
+
+    Same idea as the monochrome stand-in in mda.cpp: the 8x8 character set
+    comes from the IC38 firmware ROM (729508/G) of the real card instead of
+    an IBM character ROM, and the 8031 control processor runs the real
+    firmware (host registers 3B3/3B6/3B7). Colours are shown as colours (the
+    real card maps them to grey levels on the Nokia monochrome monitor).
+***************************************************************************/
+
+class isa8_ndc_cga_device : public isa8_cga_device
+{
+public:
+	isa8_ndc_cga_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock)
+		: isa8_cga_device(mconfig, ISA8_NDC_CGA, tag, owner, clock)
+		, m_ndc(*this, "ndc")
+	{
+		m_vram_size = 0x8000; // B8000-BFFFF as flat RAM (the BIOS tests the whole segment)
+	}
+
+	virtual void io_write(offs_t offset, uint8_t data) override;
+
+protected:
+	virtual const tiny_rom_entry *device_rom_region() const override ATTR_COLD;
+	virtual void device_add_mconfig(machine_config &config) override ATTR_COLD;
+	virtual void device_start() override ATTR_COLD;
+	virtual void device_reset() override ATTR_COLD;
+
+private:
+	void host_map(address_map &map) ATTR_COLD;
+
+	required_device<ndc286_device> m_ndc;
+	std::unique_ptr<uint8_t[]> m_ndc_ram; // A0000-AFFFF and B0000-B7FFF: the rest of the card's 128 KB display memory
+};
+
+DEFINE_DEVICE_TYPE_PRIVATE(ISA8_NDC_CGA, device_isa8_card_interface, isa8_ndc_cga_device, "isa_mm3_ndc_cga", "Nokia NDC 286 (CGA mode, 8031 firmware)")
+
+ROM_START( ndc_cga )
+	ROM_REGION(0x2000, "gfx1", ROMREGION_ERASE00)
+ROM_END
+
+const tiny_rom_entry *isa8_ndc_cga_device::device_rom_region() const
+{
+	return ROM_NAME( ndc_cga );
+}
+
+void isa8_ndc_cga_device::device_add_mconfig(machine_config &config)
+{
+	isa8_cga_device::device_add_mconfig(config);
+
+	NDC286(config, m_ndc);
+}
+
+void isa8_ndc_cga_device::host_map(address_map &map)
+{
+	// NDC 286 host interface
+	map(0x3, 0x3).rw(m_ndc, FUNC(ndc286_device::host_status_r), FUNC(ndc286_device::host_control_w));
+	map(0x6, 0x6).rw(m_ndc, FUNC(ndc286_device::host_data_r), FUNC(ndc286_device::host_data_w));
+	map(0x7, 0x7).rw(m_ndc, FUNC(ndc286_device::host_result_r), FUNC(ndc286_device::host_test_w));
+}
+
+void isa8_ndc_cga_device::device_start()
+{
+	isa8_cga_device::device_start();
+
+	m_ndc_ram = std::make_unique<uint8_t[]>(0x18000);
+	save_pointer(NAME(m_ndc_ram), 0x18000);
+	m_isa->install_bank(0xa0000, 0xaffff, m_ndc_ram.get());
+	m_isa->install_bank(0xb0000, 0xb7fff, m_ndc_ram.get() + 0x10000);
+
+	m_isa->install_device(0x3b0, 0x3b7, *this, &isa8_ndc_cga_device::host_map);
+
+	// ADU 15A: colours are shown as four shades of grey on the positive (dark on paper white) display;
+	// brightness is inverted so that the usual light text on black becomes dark text on paper white
+	// TODO: the exact grey mapping of the real NDC is not known
+	for (int i = 0; i < CGA_PALETTE_SETS * 16; i++)
+	{
+		double const lum = (0.30 * cga_palette[i][0] + 0.59 * cga_palette[i][1] + 0.11 * cga_palette[i][2]) / 255.0;
+		double const level = std::round((1.0 - lum) * 3.0) / 3.0;
+		m_palette->set_pen_color(i, ndc_shade(level));
+	}
+}
+
+void isa8_ndc_cga_device::io_write(offs_t offset, uint8_t data)
+{
+	isa8_cga_device::io_write(offset, data);
+
+	if (offset == 8)
+		m_ndc->set_host_mode(data);
+}
+
+void isa8_ndc_cga_device::device_reset()
+{
+	isa8_cga_device::device_reset();
+
+	// the card has a single 8x8 set (IBM, 256 characters) at 0x1800 in IC38; use it for both CGA font selections
+	uint8_t const *const fw = m_ndc->firmware();
+	for (int i = 0; i < 0x800; i++)
+	{
+		m_chr_gen_base[0x1000 + i] = fw[0x1800 + i];
+		m_chr_gen_base[0x1800 + i] = fw[0x1800 + i];
+	}
 }

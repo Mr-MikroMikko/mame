@@ -22,7 +22,7 @@
 
 #define TIME_PER_SECTOR_WRITE               (attotime::from_usec(100))
 #define TIME_PER_ROTATION                   (attotime::from_hz(5400/60))
-#define TIME_BETWEEN_SECTORS                (attotime::from_nsec(400))
+#define TIME_BETWEEN_SECTORS                (attotime::from_usec(250)) // was 400 ns; Phoenix BIOS 1.50 (MM3) needs ~100 us to re-arm its interrupt wait between sectors
 
 #define TIME_FULL_STROKE_SEEK               (attotime::from_usec(13000))
 #define TIME_AVERAGE_ROTATIONAL_LATENCY     (attotime::from_usec(1300))
@@ -376,7 +376,9 @@ attotime device_ata_mass_storage_device_interface::seek_time()
 
 	if (diff == 0)
 	{
-		return TIME_BETWEEN_SECTORS;
+		// a real drive needs on average half a rotation to reach the first sector; Phoenix BIOS 1.50 (Nokia MikroMikko 3)
+		// enables interrupts around the command write, so an immediate interrupt is lost and the read times out
+		return TIME_AVERAGE_ROTATIONAL_LATENCY;
 	}
 
 	attotime seek_time = (TIME_FULL_STROKE_SEEK * diff) / m_num_cylinders;

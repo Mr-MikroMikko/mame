@@ -94,6 +94,7 @@ private:
 
 // device type definition
 DECLARE_DEVICE_TYPE(ISA8_CGA, isa8_cga_device)
+DECLARE_DEVICE_TYPE(ISA8_NDC_CGA, device_isa8_card_interface)
 
 
 // ======================> isa8_cga_superimpose_device

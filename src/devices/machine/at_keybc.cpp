@@ -107,6 +107,8 @@ ROM_START(at_kbc)
 	ROMX_LOAD("yan25d05.bin", 0x0000, 0x0800, CRC(70c798f1) SHA1(ae9a79c7184a17331b70a50035ff63c757df094c), ROM_BIOS(1))
 	ROM_SYSTEM_BIOS(2, "award15", "Award 1985 V1.5") // MIPS Rx2030 i8742 keyboard controller
 	ROMX_LOAD("keyboard_1.5.bin", 0x0000, 0x0800, CRC(f86ba0f7) SHA1(1ad475451db35a76d929824c035d582279fbe3a3), ROM_BIOS(2))
+	ROM_SYSTEM_BIOS(3, "nokia", "Nokia MikroMikko 3 (ASC)") // Intel D8742, label 9544D; dumped 2026-10-22 from MM3-1, two identical reads
+	ROMX_LOAD("9544d.bin", 0x0000, 0x0800, CRC(13a38802) SHA1(121aca135a3e94b1673e0ad4976bb4d0a33aa123), ROM_BIOS(3))
 ROM_END
 
 ROM_START(ps2_kbc)
