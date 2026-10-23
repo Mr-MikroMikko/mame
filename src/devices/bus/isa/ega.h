@@ -66,6 +66,8 @@ public:
 	required_device<crtc_ega_device> m_crtc_ega;
 
 	virtual void install_banks();
+	// master dot clock selected by Misc Output bits 3-2 (cards with more than the two IBM oscillators override this)
+	virtual uint32_t dot_clock() const { return (m_misc_output & 0x0c) ? 16257000 : 14318181; }
 	void change_mode();
 	void pc_ega8_3X0_w(offs_t offset, uint8_t data);
 	uint8_t pc_ega8_3X0_r(offs_t offset);

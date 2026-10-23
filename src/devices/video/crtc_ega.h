@@ -69,6 +69,14 @@ public:
 	/* set number of pixels per video memory address */
 	void set_hpixels_per_column(int hpixels_per_column);
 
+	/* blanking registers (horizontal in character clocks, vertical in scan lines), for cards that show the border only
+	   between the active display and the start of blanking */
+	uint8_t horiz_blank_start() const { return m_horiz_blank_start; }
+	uint8_t horiz_blank_end() const { return m_horiz_blank_end; }
+	uint16_t vert_blank_start() const { return m_vert_blank_start; }
+	uint8_t vert_blank_end() const { return m_vert_blank_end; }
+	int hpixels_per_column() const { return m_hpixels_per_column; }
+
 	/* updates the screen -- this will call begin_update(), */
 	/* followed by update_row() repeatedly and after all row */
 	/* updating is complete, end_update() */
