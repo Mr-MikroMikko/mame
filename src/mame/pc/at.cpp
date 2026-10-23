@@ -104,10 +104,16 @@ Variants: T denotes an active 8.4" display, C a passive 9.5" color display. 3560
 
 #include "emu.h"
 
+#include "bus/isa/cga.h"
 #include "bus/isa/isa_cards.h"
+#include "bus/isa/mda.h"
+#include "bus/isa/ndc286.h"
+#include "bus/isa/pega2a.h"
+#include "bus/isa/wd1003_wa2.h"
 #include "bus/lpci/pci.h"
 #include "bus/lpci/vt82c505.h"
 #include "bus/pc_kbd/keyboards.h"
+#include "bus/pc_kbd/mm3_hle_kbd.h"
 #include "bus/pc_kbd/pc_kbdc.h"
 #include "cpu/i386/i386.h"
 #include "cpu/i86/i286.h"
@@ -122,7 +128,6 @@ Variants: T denotes an active 8.4" display, C a passive 9.5" color display. 3560
 #include "emupal.h"
 #include "softlist_dev.h"
 #include "speaker.h"
-
 
 namespace {
 
@@ -165,6 +170,9 @@ public:
 	void n8810m15(machine_config &config) ATTR_COLD;
 	void n8810m55(machine_config &config) ATTR_COLD;
 	void ews286(machine_config &config) ATTR_COLD;
+	void mm3asc(machine_config &config) ATTR_COLD;
+	void mm3asc_mda(machine_config &config) ATTR_COLD;
+	void mm3asc_ega(machine_config &config) ATTR_COLD;
 	void olyport40(machine_config &config) ATTR_COLD;
 	void micral45(machine_config &config) ATTR_COLD;
 	void euroat(machine_config &config) ATTR_COLD;
@@ -445,6 +453,47 @@ void at_state::ews286(machine_config &config)
 	SOFTWARE_LIST(config, "ews286_disk_list").set_original("ews286_flop");
 
 	m_ram->set_default_size("640K");
+}
+
+void at_state::mm3asc(machine_config &config)
+{
+	ibm5170(config);
+	m_maincpu->set_clock(16_MHz_XTAL / 2); // 8 MHz (6 MHz selectable with XMODE /C6), exact crystal not verified
+
+	// NDC 286 display controller and Nokia 100/102 keyboard are not dumped/emulated yet: temporary stand-ins without IBM ROMs
+	subdevice<isa16_slot_device>("isa1")->option_add("ndccga", ISA8_NDC_CGA);   // MM3-1 is set up for "Color (80 col.)"
+	subdevice<isa16_slot_device>("isa1")->option_add("ndcmda", ISA8_NDC_STUB);
+	subdevice<isa16_slot_device>("isa1")->set_default_option("ndccga");
+	subdevice<isa16_slot_device>("isa2")->set_option_machine_config("fdc", cfg_single_1200K);
+	// MM3-1 has a WD1003-WA2 (MFM Winchester + floppy controller); only its Winchester part is emulated so far
+	subdevice<isa16_slot_device>("isa4")->option_add("wd1003wa2", ISA16_WD1003_WA2);
+	subdevice<isa16_slot_device>("isa4")->set_default_option("wd1003wa2");
+	subdevice<pc_kbdc_device>("kbd")->option_reset();
+	subdevice<pc_kbdc_device>("kbd")->option_add("hle", MM3_HLE_KBD);
+	subdevice<pc_kbdc_device>("kbd")->set_default_option("hle");
+
+	m_ram->set_default_size("1M"); // 512 kB or 1 MB on the SBC 286
+
+	subdevice<at_keyboard_controller_device>("mb:keybc")->set_default_bios_tag("nokia"); // own D8742 dump (9544d.bin), not the IBM 8042
+	// D8742 P1: bit 0 = 0 selects the AT keyboard protocol (1 = host-clocked Nokia protocol), bit 6 = CRT adapter switch (0 = CGA)
+	subdevice<mcs48_cpu_device>("mb:keybc:mcu")->p1_in_cb().set_constant(0xbe);
+}
+
+void at_state::mm3asc_ega(machine_config &config)
+{
+	mm3asc(config);
+
+	// Nokia EGA (Paradise Autoswitch EGA2) instead of the NDC 286
+	subdevice<isa16_slot_device>("isa1")->option_add("pega2a", ISA8_PEGA2A);
+	subdevice<isa16_slot_device>("isa1")->set_default_option("pega2a");
+}
+
+void at_state::mm3asc_mda(machine_config &config)
+{
+	mm3asc(config);
+
+	subdevice<isa16_slot_device>("isa1")->set_default_option("ndcmda");
+	subdevice<mcs48_cpu_device>("mb:keybc:mcu")->p1_in_cb().set_constant(0xfe); // CRT adapter switch = monochrome
 }
 
 void at_state::ec1842(machine_config &config)
@@ -2577,6 +2626,109 @@ ROM_START( ews286 ) // Computer is brown/yellow-ish with Ericsson logo
 	ROM_REGION16_LE(0x20000, "bios", 0)
 	ROM_LOAD16_BYTE( "rys_103_1002_r8a_3c00_ic-pos_71.bin", 0x18000, 0x4000, CRC(af179e56) SHA1(58b1df46d6e68eef472a0529cb9317abaf17880f)) // Last ROM set and has Nokia
 	ROM_LOAD16_BYTE( "rys_103_1003_r8a_8600_ic-pos_69.bin", 0x18001, 0x4000, CRC(555502cb) SHA1(1977fe54b69c5e52731bf3eb8bdabe777aac014b)) // copyright patched in both roms
+ROM_END
+
+// Nokia MikroMikko 3 (ASC) - system board SBC 286, ROMs U75 (even) and U84 (odd), labels 9542G/9543G
+// BIOS-String: Nokia & Phoenix 80286 ROM BIOS Version 1.50 (BIOS release date: 06/12/87), Keyboard controller Intel D8742 (label 9544D, not dumped)
+ROM_START( mm3asc )
+	// default CMOS for the emulated configuration (1.2M floppy A:, fixed disk type 13, color display (CGA), 640K + 384K); checksum 0214h over 10h-2Dh
+	ROM_REGION(0x40, "mb:rtc", ROMREGION_ERASE00)
+	ROM_FILL(0x04, 1, 0x12) // time 12:00:00, date 22.10.2026 (BCD, 24-hour mode); the BIOS rejects an all-zero clock
+	ROM_FILL(0x06, 1, 0x05)
+	ROM_FILL(0x07, 1, 0x22)
+	ROM_FILL(0x08, 1, 0x10)
+	ROM_FILL(0x09, 1, 0x26)
+	ROM_FILL(0x0a, 1, 0x26) // register A: 32.768 kHz divider, 1024 Hz periodic rate (the BIOS expects the oscillator running)
+	ROM_FILL(0x0b, 1, 0x02) // register B: 24-hour mode, BCD
+	ROM_FILL(0x10, 1, 0x20) // floppy A: 1.2 MB
+	ROM_FILL(0x12, 1, 0xd0) // fixed disk C: type 13 (1024 cylinders, 8 heads, 17 sectors in the Phoenix 1.50 table)
+	ROM_FILL(0x14, 1, 0x21) // equipment: one floppy, 80-column color display
+	ROM_FILL(0x15, 1, 0x80) // base memory 640 KB
+	ROM_FILL(0x16, 1, 0x02)
+	ROM_FILL(0x17, 1, 0x80) // extended memory 384 KB
+	ROM_FILL(0x18, 1, 0x01)
+	ROM_FILL(0x2e, 1, 0x02) // checksum
+	ROM_FILL(0x2f, 1, 0x14)
+	ROM_FILL(0x30, 1, 0x80) // extended memory (actual)
+	ROM_FILL(0x31, 1, 0x01)
+	ROM_FILL(0x32, 1, 0x20) // century
+
+	ROM_REGION16_LE(0x20000, "bios", 0)
+	ROM_DEFAULT_BIOS("1.50g")
+	ROM_SYSTEM_BIOS(0, "1.50g", "BIOS 1.50G (06/12/87)")
+	ROMX_LOAD( "9542g.u75", 0x10000, 0x8000, CRC(7b97eb78) SHA1(25f1919e9a81a277b93386103e55e21a6e4284c7), ROM_SKIP(1) | ROM_BIOS(0) )
+	ROMX_LOAD( "9543g.u84", 0x10001, 0x8000, CRC(e4b54318) SHA1(c54b4a1b56e2937006339698b6949c2f5a7c1f38), ROM_SKIP(1) | ROM_BIOS(0) )
+	ROM_SYSTEM_BIOS(1, "1.50i", "BIOS 1.50I (10/12/88, MM3-1 SN 782500004)")
+	ROMX_LOAD( "9542i.u75", 0x10000, 0x8000, CRC(440516be) SHA1(d787bbec29a4a814d28e563d32a52851cff93be8), ROM_SKIP(1) | ROM_BIOS(1) )
+	ROMX_LOAD( "9543i.u84", 0x10001, 0x8000, CRC(2bdacc40) SHA1(68f37c76103b97a5109923ea36473c104abd7f56), ROM_SKIP(1) | ROM_BIOS(1) )
+ROM_END
+
+// Same machine with the Nokia EGA card (Paradise Autoswitch EGA2) instead of the NDC 286
+ROM_START( mm3asc_ega )
+	// default CMOS for the emulated configuration (1.2M floppy A:, fixed disk type 13, color display (CGA), 640K + 384K); checksum 01f4h over 10h-2Dh
+	ROM_REGION(0x40, "mb:rtc", ROMREGION_ERASE00)
+	ROM_FILL(0x04, 1, 0x12) // time 12:00:00, date 22.10.2026 (BCD, 24-hour mode); the BIOS rejects an all-zero clock
+	ROM_FILL(0x06, 1, 0x05)
+	ROM_FILL(0x07, 1, 0x22)
+	ROM_FILL(0x08, 1, 0x10)
+	ROM_FILL(0x09, 1, 0x26)
+	ROM_FILL(0x0a, 1, 0x26) // register A: 32.768 kHz divider, 1024 Hz periodic rate (the BIOS expects the oscillator running)
+	ROM_FILL(0x0b, 1, 0x02) // register B: 24-hour mode, BCD
+	ROM_FILL(0x10, 1, 0x20) // floppy A: 1.2 MB
+	ROM_FILL(0x12, 1, 0xd0) // fixed disk C: type 13 (1024 cylinders, 8 heads, 17 sectors in the Phoenix 1.50 table)
+	ROM_FILL(0x14, 1, 0x01) // equipment: one floppy, EGA/VGA display (display type 00 in Setup; any other type is rejected as "invalid configuration" because the EGA BIOS sets its own equipment bits)
+	ROM_FILL(0x15, 1, 0x80) // base memory 640 KB
+	ROM_FILL(0x16, 1, 0x02)
+	ROM_FILL(0x17, 1, 0x80) // extended memory 384 KB
+	ROM_FILL(0x18, 1, 0x01)
+	ROM_FILL(0x2e, 1, 0x01) // checksum
+	ROM_FILL(0x2f, 1, 0xf4)
+	ROM_FILL(0x30, 1, 0x80) // extended memory (actual)
+	ROM_FILL(0x31, 1, 0x01)
+	ROM_FILL(0x32, 1, 0x20) // century
+
+	ROM_REGION16_LE(0x20000, "bios", 0)
+	ROM_DEFAULT_BIOS("1.50g")
+	ROM_SYSTEM_BIOS(0, "1.50g", "BIOS 1.50G (06/12/87)")
+	ROMX_LOAD( "9542g.u75", 0x10000, 0x8000, CRC(7b97eb78) SHA1(25f1919e9a81a277b93386103e55e21a6e4284c7), ROM_SKIP(1) | ROM_BIOS(0) )
+	ROMX_LOAD( "9543g.u84", 0x10001, 0x8000, CRC(e4b54318) SHA1(c54b4a1b56e2937006339698b6949c2f5a7c1f38), ROM_SKIP(1) | ROM_BIOS(0) )
+	ROM_SYSTEM_BIOS(1, "1.50i", "BIOS 1.50I (10/12/88, MM3-1 SN 782500004)")
+	ROMX_LOAD( "9542i.u75", 0x10000, 0x8000, CRC(440516be) SHA1(d787bbec29a4a814d28e563d32a52851cff93be8), ROM_SKIP(1) | ROM_BIOS(1) )
+	ROMX_LOAD( "9543i.u84", 0x10001, 0x8000, CRC(2bdacc40) SHA1(68f37c76103b97a5109923ea36473c104abd7f56), ROM_SKIP(1) | ROM_BIOS(1) )
+ROM_END
+
+// Same machine with the NDC 286 in IBM monochrome (MDA) mode
+ROM_START( mm3asc_mda )
+	// default CMOS for the emulated configuration (1.2M floppy A:, fixed disk type 13, MDA, 640K + 384K); checksum 0224h over 10h-2Dh
+	ROM_REGION(0x40, "mb:rtc", ROMREGION_ERASE00)
+	ROM_FILL(0x04, 1, 0x12) // time 12:00:00, date 22.10.2026 (BCD, 24-hour mode); the BIOS rejects an all-zero clock
+	ROM_FILL(0x06, 1, 0x05)
+	ROM_FILL(0x07, 1, 0x22)
+	ROM_FILL(0x08, 1, 0x10)
+	ROM_FILL(0x09, 1, 0x26)
+	ROM_FILL(0x0a, 1, 0x26) // register A: 32.768 kHz divider, 1024 Hz periodic rate (the BIOS expects the oscillator running)
+	ROM_FILL(0x0b, 1, 0x02) // register B: 24-hour mode, BCD
+	ROM_FILL(0x10, 1, 0x20) // floppy A: 1.2 MB
+	ROM_FILL(0x12, 1, 0xd0) // fixed disk C: type 13 (1024 cylinders, 8 heads, 17 sectors in the Phoenix 1.50 table)
+	ROM_FILL(0x14, 1, 0x31) // equipment: one floppy, monochrome display
+	ROM_FILL(0x15, 1, 0x80) // base memory 640 KB
+	ROM_FILL(0x16, 1, 0x02)
+	ROM_FILL(0x17, 1, 0x80) // extended memory 384 KB
+	ROM_FILL(0x18, 1, 0x01)
+	ROM_FILL(0x2e, 1, 0x02) // checksum
+	ROM_FILL(0x2f, 1, 0x24)
+	ROM_FILL(0x30, 1, 0x80) // extended memory (actual)
+	ROM_FILL(0x31, 1, 0x01)
+	ROM_FILL(0x32, 1, 0x20) // century
+
+	ROM_REGION16_LE(0x20000, "bios", 0)
+	ROM_DEFAULT_BIOS("1.50g")
+	ROM_SYSTEM_BIOS(0, "1.50g", "BIOS 1.50G (06/12/87)")
+	ROMX_LOAD( "9542g.u75", 0x10000, 0x8000, CRC(7b97eb78) SHA1(25f1919e9a81a277b93386103e55e21a6e4284c7), ROM_SKIP(1) | ROM_BIOS(0) )
+	ROMX_LOAD( "9543g.u84", 0x10001, 0x8000, CRC(e4b54318) SHA1(c54b4a1b56e2937006339698b6949c2f5a7c1f38), ROM_SKIP(1) | ROM_BIOS(0) )
+	ROM_SYSTEM_BIOS(1, "1.50i", "BIOS 1.50I (10/12/88, MM3-1 SN 782500004)")
+	ROMX_LOAD( "9542i.u75", 0x10000, 0x8000, CRC(440516be) SHA1(d787bbec29a4a814d28e563d32a52851cff93be8), ROM_SKIP(1) | ROM_BIOS(1) )
+	ROMX_LOAD( "9543i.u84", 0x10001, 0x8000, CRC(2bdacc40) SHA1(68f37c76103b97a5109923ea36473c104abd7f56), ROM_SKIP(1) | ROM_BIOS(1) )
 ROM_END
 
 // Nokia Data WS286
@@ -5607,6 +5759,9 @@ COMP( 199?, minisys2k, ibm5170, 0,       atturbo,   0,     at_state,     init_at
 COMP( 198?, mkp286,    ibm5170, 0,       atturbo,   0,     at_state,     init_at,        "Morse", "KP-286", MACHINE_NOT_WORKING )
 COMP( 1987, n8810m15,  ibm5170, 0,       n8810m15,  0,     at_state,     init_at,        "Nixdorf Computer AG", "8810 M15", MACHINE_NOT_WORKING )
 COMP( 1990, n8810m16c, ibm5170, 0,       n8810m15,  0,     at_state,     init_at,        "Nixdorf Computer AG", "8810 M16 CGA version", MACHINE_NOT_WORKING )
+COMP( 1986, mm3asc,    0,       0,       mm3asc,    0,     at_state,     init_at,        "Nokia Data",  "MikroMikko 3 (ASC, NDC 286 in CGA mode)", MACHINE_NOT_WORKING )
+COMP( 1986, mm3asc_mda,   mm3asc,  0,       mm3asc_mda,   0,     at_state,     init_at,        "Nokia Data",  "MikroMikko 3 (ASC, NDC 286 in MDA mode)", MACHINE_NOT_WORKING )
+COMP( 1986, mm3asc_ega, mm3asc,  0,       mm3asc_ega, 0,     at_state,     init_at,        "Nokia Data",  "MikroMikko 3 (ASC, Nokia EGA)", MACHINE_NOT_WORKING )
 COMP( 1990, n8810m30,  ibm5170, 0,       neat,      0,     at_state,     init_at,        "Nixdorf Computer AG", "8810 M30", MACHINE_NOT_WORKING )
 COMP( 1986, n8810m55,  ibm5170, 0,       n8810m55,  0,     at_state,     init_at,        "Nixdorf Computer AG", "8810 M55", MACHINE_NOT_WORKING )
 COMP( 1990, n8810m16v, ibm5170, 0,       atturbo,   0,     at_state,     init_at,        "Nixdorf Computer AG", "8810 M16 VGA version", MACHINE_NOT_WORKING )
