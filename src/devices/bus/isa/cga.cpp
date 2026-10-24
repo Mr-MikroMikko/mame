@@ -2222,6 +2222,7 @@ protected:
 
 private:
 	void host_map(address_map &map) ATTR_COLD;
+	MC6845_RECONFIGURE(reconfigure);
 
 	required_device<ndc286_device> m_ndc;
 	std::unique_ptr<uint8_t[]> m_ndc_ram; // A0000-AFFFF and B0000-B7FFF: the rest of the card's 128 KB display memory
@@ -2242,7 +2243,22 @@ void isa8_ndc_cga_device::device_add_mconfig(machine_config &config)
 {
 	isa8_cga_device::device_add_mconfig(config);
 
+	m_crtc->set_reconfigure_callback(FUNC(isa8_ndc_cga_device::reconfigure));
+
 	NDC286(config, m_ndc);
+}
+
+// The IBM CGA card keeps the screen at the CGA timing and only follows the CRTC's horizontal visible area. The NDC is also
+// programmed with other timings (the BIOS 7.02 of the MikroMikko 3TT m215 sets 218 lines at about 82 Hz); then the CRTC's
+// vsync, which restarts the screen, comes before the screen reaches its last visible line and no frame is ever finished.
+// So the screen follows the CRTC's totals and frame period; the vertical visible area stays at the 200 CGA lines.
+MC6845_RECONFIGURE( isa8_ndc_cga_device::reconfigure )
+{
+	rectangle const curvisarea = m_screen->visible_area();
+	if (height > curvisarea.bottom())
+		m_screen->configure(width, height, rectangle(visarea.left(), visarea.right(), curvisarea.top(), curvisarea.bottom()), frame_period);
+	else
+		m_screen->set_visible_area(visarea.left(), visarea.right(), curvisarea.top(), curvisarea.bottom());
 }
 
 void isa8_ndc_cga_device::host_map(address_map &map)
