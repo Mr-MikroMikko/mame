@@ -17,7 +17,7 @@ below instead of hidden.
 |---|---|---|
 | `mm3-common` | `master` | Devices shared by several MM3 models: NDC 286 display controller, MDA/CGA stand-in cards, HLE keyboard, Nokia D8742 firmware option, IDE timing fixes, **WD1003-WA2 MFM controller** (calibrated against a real drive), **Paradise Autoswitch EGA2** (Nokia EGA card, experimental) |
 | `mm3-asc` | `mm3-common` | `mm3asc` (NDC in CGA mode), `mm3asc_mda` (NDC in MDA mode) and `mm3asc_ega` (Nokia EGA card), SBC 286 board, Phoenix BIOS 1.50 |
-| `mm3-m215` | `mm3-common` | `mm3ttm215` (MikroMikko 3TT m215): Chips NEAT chip set, Nokia ROM BIOS 7.02, PS/2-type keyboard controller (HLE); passes POST and boots MS-DOS from a floppy, hard disk not tested |
+| `mm3tt-m215` | `mm3-common` | `mm3ttm215` (MikroMikko 3TT m215): Chips NEAT chip set, Nokia ROM BIOS 7.02, PS/2-type keyboard controller (HLE); passes POST and boots MS-DOS from a floppy, hard disk not tested |
 
 Rule used: a part moves into `mm3-common` when more than one model uses it (the WD1003-WA2 and the EGA card are used by the ASC and the 3TT/AWS machines).
 
