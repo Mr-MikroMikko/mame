@@ -67,6 +67,7 @@ private:
 	bool m_address_valid;
 
 	const char *m_cputag;
+	cpu_device *m_cpu;
 	const char *m_isatag;
 	const char *m_biostag;
 

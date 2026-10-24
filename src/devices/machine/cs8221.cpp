@@ -64,7 +64,9 @@ static const char *const register_names[] =
 cs8221_device::cs8221_device(const machine_config &mconfig, const char *tag, device_t *owner, uint32_t clock)
 	: device_t(mconfig, CS8221, tag, owner, clock),
 		m_address(0),
-		m_address_valid(false)
+		m_address_valid(false),
+		m_cputag(nullptr),
+		m_cpu(nullptr)
 {
 }
 
@@ -74,6 +76,8 @@ cs8221_device::cs8221_device(const machine_config &mconfig, const char *tag, dev
 
 void cs8221_device::device_start()
 {
+	m_cpu = m_cputag ? machine().root_device().subdevice<cpu_device>(m_cputag) : nullptr;
+	save_item(NAME(m_registers));
 }
 
 //-------------------------------------------------
@@ -90,10 +94,12 @@ void cs8221_device::device_reset()
 //**************************************************************************
 //  READ/WRITE HANDLERS
 //**************************************************************************
+// installed at 0x22-0x23 by the board, so the addresses here are relative to that range (absolute 0x22/0x23 put both
+// entries outside the range and the writes went to the interrupt controller mirror instead)
 void cs8221_device::map(address_map &map)
 {
-	map(0x0022, 0x0022).w("cs8221", FUNC(cs8221_device::address_w));
-	map(0x0023, 0x0023).rw("cs8221", FUNC(cs8221_device::data_r), FUNC(cs8221_device::data_w));
+	map(0x00, 0x00).w(FUNC(cs8221_device::address_w));
+	map(0x01, 0x01).rw(FUNC(cs8221_device::data_r), FUNC(cs8221_device::data_w));
 }
 
 void cs8221_device::address_w(uint8_t data)
@@ -125,13 +131,24 @@ void cs8221_device::data_w(uint8_t data)
 	{
 		LOGREGISTER("cs8221_device: write %s = %02x\n", register_names[m_address & 0x0f], data);
 
+		const uint8_t old = m_registers[m_address & 0x0f];
+
 		// update register with new data
 		m_registers[m_address & 0x0f] = data;
 
 		// execute command
 		switch (m_address)
 		{
-			case 0x60: break;
+			case 0x60:
+				// PROCCLK (82C211): bit 4 selects the processor clock. Setting bit 5 resets the CPU without touching memory;
+				// a 286 BIOS uses it to leave protected mode (the Nokia ROM BIOS 7.02 of the MikroMikko 3TT m215 stores
+				// its resume address at 40:67 and shutdown code 0Ah in the CMOS, then toggles this bit and waits)
+				if (!BIT(old, 5) && BIT(data, 5) && m_cpu)
+				{
+					LOGREGISTER("cs8221_device: CPU reset\n");
+					m_cpu->pulse_input_line(INPUT_LINE_RESET, attotime::zero);
+				}
+				break;
 			case 0x61: break;
 			case 0x62: break;
 			case 0x63: break;
