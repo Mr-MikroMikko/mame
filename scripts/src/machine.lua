@@ -5904,3 +5904,15 @@ if MACHINES["PLS105"] then
 		MAME_DIR .. "src/devices/machine/pls105.h",
 	}
 end
+
+---------------------------------------------------
+--
+--@src/devices/machine/nokia_ps2_kbc.h,MACHINES["NOKIA_PS2_KBC"] = true
+---------------------------------------------------
+
+if MACHINES["NOKIA_PS2_KBC"] then
+	files {
+		MAME_DIR .. "src/devices/machine/nokia_ps2_kbc.cpp",
+		MAME_DIR .. "src/devices/machine/nokia_ps2_kbc.h",
+	}
+end

@@ -119,6 +119,7 @@ Variants: T denotes an active 8.4" display, C a passive 9.5" color display. 3560
 #include "machine/cs8221.h"
 #include "machine/ds128x.h"
 #include "machine/idectrl.h"
+#include "machine/nokia_ps2_kbc.h"
 #include "machine/nvram.h"
 #include "machine/ram.h"
 #include "machine/vt82c496.h"
@@ -201,6 +202,7 @@ protected:
 	void ficpio_io(address_map &map) ATTR_COLD;
 	void ficpio_map(address_map &map) ATTR_COLD;
 	void neat_io(address_map &map) ATTR_COLD;
+	void mm3ttm215_io(address_map &map) ATTR_COLD;
 	void ps1_16_io(address_map &map) ATTR_COLD;
 };
 
@@ -301,6 +303,24 @@ void at_state::neat_io(address_map &map)
 	map.unmap_value_high();
 	map(0x0000, 0x00ff).m(m_mb, FUNC(at_mb_device::map));
 	map(0x0022, 0x0023).m("cs8221", FUNC(cs8221_device::map));
+}
+
+// the motherboard map without its AT keyboard controller: the m215 has a PS/2-type one
+void at_state::mm3ttm215_io(address_map &map)
+{
+	map.unmap_value_high();
+	map(0x0000, 0x001f).rw("mb:dma8237_1", FUNC(am9517a_device::read), FUNC(am9517a_device::write)).umask16(0xffff);
+	map(0x0020, 0x003f).rw("mb:pic8259_master", FUNC(pic8259_device::read), FUNC(pic8259_device::write)).umask16(0xffff);
+	map(0x0022, 0x0023).m("cs8221", FUNC(cs8221_device::map));
+	map(0x0040, 0x005f).rw("mb:pit8254", FUNC(pit8254_device::read), FUNC(pit8254_device::write)).umask16(0xffff);
+	map(0x0060, 0x0060).rw("kbc", FUNC(nokia_ps2_kbc_device::data_r), FUNC(nokia_ps2_kbc_device::data_w));
+	map(0x0061, 0x0061).rw(m_mb, FUNC(at_mb_device::portb_r), FUNC(at_mb_device::portb_w));
+	map(0x0064, 0x0064).rw("kbc", FUNC(nokia_ps2_kbc_device::status_r), FUNC(nokia_ps2_kbc_device::command_w));
+	map(0x0070, 0x007f).w(m_mb, FUNC(at_mb_device::rtcas_nmi_w)).umask16(0x00ff);
+	map(0x0070, 0x007f).rw("mb:rtc", FUNC(mc146818_device::data_r), FUNC(mc146818_device::data_w)).umask16(0xff00);
+	map(0x0080, 0x009f).rw(m_mb, FUNC(at_mb_device::page8_r), FUNC(at_mb_device::page8_w)).umask16(0xffff);
+	map(0x00a0, 0x00bf).rw("mb:pic8259_slave", FUNC(pic8259_device::read), FUNC(pic8259_device::write)).umask16(0xffff);
+	map(0x00c0, 0x00df).rw("mb:dma8237_2", FUNC(am9517a_device::read), FUNC(am9517a_device::write)).umask16(0x00ff);
 }
 
 void at_state::at32_io(address_map &map)
@@ -456,7 +476,7 @@ void at_state::mm3ttm215(machine_config &config)
 	neat(config);
 	m_maincpu->set_clock(12'500'000); // 12.5 MHz (crystals 25/30/16 MHz on the board)
 
-	// same stand-ins as the ASC: NDC-style display, HLE keyboard, Nokia 8742 firmware (the real P8742AH contents are not dumped)
+	// same stand-ins as the ASC: NDC-style display and HLE keyboard
 	subdevice<isa16_slot_device>("isa1")->option_add("ndccga", ISA8_NDC_CGA);
 	subdevice<isa16_slot_device>("isa1")->option_add("ndcmda", ISA8_NDC_STUB);
 	subdevice<isa16_slot_device>("isa1")->set_default_option("ndccga");
@@ -468,8 +488,20 @@ void at_state::mm3ttm215(machine_config &config)
 
 	m_ram->set_default_size("2M");
 
-	subdevice<at_keyboard_controller_device>("mb:keybc")->set_default_bios_tag("nokia");
-	subdevice<mcs48_cpu_device>("mb:keybc:mcu")->p1_in_cb().set_constant(0xbe);
+	// PS/2-type keyboard controller (P8742AH, label RON 1035B R1A, firmware not dumped): high level stand-in
+	m_maincpu->set_addrmap(AS_IO, &at_state::mm3ttm215_io);
+	config.device_remove("mb:keybc");
+	nokia_ps2_kbc_device &kbc(NOKIA_PS2_KBC(config, "kbc"));
+	kbc.set_input_port(0xbc);
+	kbc.hot_res().set_inputline(m_maincpu, INPUT_LINE_RESET);
+	kbc.gate_a20().set_inputline(m_maincpu, INPUT_LINE_A20);
+	kbc.kbd_irq().set("mb:pic8259_master", FUNC(pic8259_device::ir1_w));
+	kbc.aux_irq().set("mb:pic8259_slave", FUNC(pic8259_device::ir4_w));
+	kbc.kbd_clk().set("kbd", FUNC(pc_kbdc_device::clock_write_from_mb));
+	kbc.kbd_data().set("kbd", FUNC(pc_kbdc_device::data_write_from_mb));
+	pc_kbdc_device &kbd(*subdevice<pc_kbdc_device>("kbd"));
+	kbd.out_clock_cb().set(kbc, FUNC(nokia_ps2_kbc_device::kbd_clk_w));
+	kbd.out_data_cb().set(kbc, FUNC(nokia_ps2_kbc_device::kbd_data_w));
 }
 
 void at_state::ec1842(machine_config &config)
