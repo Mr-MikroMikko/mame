@@ -17,7 +17,7 @@ below instead of hidden.
 |---|---|---|
 | `mm3-common` | `master` | Devices shared by several MM3 models: NDC 286 display controller, MDA/CGA stand-in cards, HLE keyboard, Nokia D8742 firmware option, IDE timing fixes, **WD1003-WA2 MFM controller** (calibrated against a real drive), **Paradise Autoswitch EGA2** (Nokia EGA card, experimental) |
 | `mm3-asc` | `mm3-common` | `mm3asc` (NDC in CGA mode), `mm3asc_mda` (NDC in MDA mode) and `mm3asc_ega` (Nokia EGA card), SBC 286 board, Phoenix BIOS 1.50 |
-| `mm3-m215` | `mm3-common` | `mm3ttm215` (MikroMikko 3TT m215), **does not work yet** |
+| `mm3-m215` | `mm3-common` | `mm3ttm215` (MikroMikko 3TT m215): Chips NEAT chip set, Nokia ROM BIOS 7.02, PS/2-type keyboard controller (HLE); passes POST and boots MS-DOS from a floppy, hard disk not tested |
 
 Rule used: a part moves into `mm3-common` when more than one model uses it (the WD1003-WA2 and the EGA card are used by the ASC and the 3TT/AWS machines).
 
@@ -91,8 +91,10 @@ Not tested or not done:
   in bit 5 is a guess (both OFF on the real card). The screen aspect is fixed at 4:3, which suits the 350 line mode.
 - WD1015-37 firmware of the WA2 is a masked ROM that has not been dumped; its behaviour is reproduced from the
   manual. ECC bytes and retries are not modelled, Format Track ignores the host interleave table.
-- `mm3ttm215` stops in a POST error loop (the BIOS expects the standard AT 8742 status behaviour, the Nokia
-  firmware does not provide it; the real P8742AH is not dumped).
+- `mm3ttm215`: the keyboard controller is a high level stand-in. The BIOS needs a PS/2-type controller (auxiliary
+  port, command byte bit 5 = auxiliary clock off); the real P8742AH is not dumped yet, so its exact command set,
+  timing and the password commands are not reproduced. No mouse is connected. The hard disk controller of the m215
+  is not known and not emulated; only floppy boot is tested.
 - No MM3/386 (Chips CS8230 chip set), no MM3TT/AWS variant, no LAN Manager networking.
 - Shared code changed outside the MM3 devices: the AT board (`at_mb_device`) now treats bit 7 of port 70h as the NMI
   mask (1 = disabled) as on a real AT (it was inverted, so an IOCHCK NMI never reached the CPU); `isa8_ega_device`
